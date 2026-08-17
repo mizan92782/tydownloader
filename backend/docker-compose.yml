@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ytdl_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: ytdl_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ytdl_redis
+    restart: always
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: ytdl_api
+    restart: always
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    volumes:
+      - .:/workspace
+      - downloads_data:/workspace/downloads
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgrespassword@postgres:5432/ytdl_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=supersecretkey123
+      - DOWNLOAD_DIR=/workspace/downloads
+      - MAX_FILE_SIZE=500000000
+      - MAX_CONCURRENT_DOWNLOADS=3
+      - CORS_ORIGINS=["*"]
+      - API_HOST=0.0.0.0
+      - API_PORT=8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    container_name: ytdl_worker
+    restart: always
+    command: celery -A app.workers.celery_app.celery worker --loglevel=info -c 2
+    volumes:
+      - .:/workspace
+      - downloads_data:/workspace/downloads
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgrespassword@postgres:5432/ytdl_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=supersecretkey123
+      - DOWNLOAD_DIR=/workspace/downloads
+      - MAX_FILE_SIZE=500000000
+      - MAX_CONCURRENT_DOWNLOADS=3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  downloads_data:
